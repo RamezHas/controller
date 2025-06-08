@@ -11,11 +11,17 @@ cap = cv2.VideoCapture(0)
 cap.set(3, Wcam)
 cap.set(4, Hcam)
 
-# Detector and controller
+# Detector and gamepad
 detector = htm.handDetector(detectionCon=0.75, maxHands=2)
 gamepad = vg.VX360Gamepad()
 
-# === GAMEPAD CONTROL ===
+# Track state
+right_hand_action = None
+
+# === HELPER FUNCTIONS ===
+def is_touching(p1, p2, threshold=30):
+    return math.hypot(p1[1] - p2[1], p1[2] - p2[2]) < threshold
+
 def press_button(action):
     if action == "short_pass":
         gamepad.press_button(button=vg.XUSB_BUTTON.XUSB_GAMEPAD_A)
@@ -37,52 +43,52 @@ def release_all():
     gamepad.release_button(button=vg.XUSB_BUTTON.XUSB_GAMEPAD_Y)
     gamepad.update()
 
-def release_dpad():
-    gamepad.release_button(button=vg.XUSB_BUTTON.XUSB_GAMEPAD_DPAD_UP)
-    gamepad.release_button(button=vg.XUSB_BUTTON.XUSB_GAMEPAD_DPAD_DOWN)
-    gamepad.release_button(button=vg.XUSB_BUTTON.XUSB_GAMEPAD_DPAD_LEFT)
-    gamepad.release_button(button=vg.XUSB_BUTTON.XUSB_GAMEPAD_DPAD_RIGHT)
-    gamepad.update()
-
-def is_touching(p1, p2, threshold=30):
-    return math.hypot(p1[1] - p2[1], p1[2] - p2[2]) < threshold
-
-def detect_dpad_gesture(lmList):
-    thumb = lmList[4]
-    index = lmList[8]
-    middle = lmList[12]
-    ring = lmList[16]
-    pinky = lmList[20]
-
-    if is_touching(thumb, index):
-        return "right"
-    elif is_touching(thumb, middle):
-        return "up"
-    elif is_touching(thumb, ring):
-        return "down"
-    elif is_touching(thumb, pinky):
-        return "left"
-    return None
-
 def recognize_button_touch(lmList):
     thumb = lmList[4]
-    index = lmList[8]
-    middle = lmList[12]
-    ring = lmList[16]
-    pinky = lmList[20]
-
-    if is_touching(thumb, index):
+    if is_touching(thumb, lmList[8]):
         return "short_pass"
-    elif is_touching(thumb, middle):
+    elif is_touching(thumb, lmList[12]):
         return "shoot"
-    elif is_touching(thumb, ring):
+    elif is_touching(thumb, lmList[16]):
         return "long_pass"
-    elif is_touching(thumb, pinky):
+    elif is_touching(thumb, lmList[20]):
         return "change_player"
     return "idle"
 
+def update_analog_if_touching(thumb, index, center, dead_zone=10, max_radius=60):
+    if is_touching(thumb, index):
+        dx = center[0] - index[1]  # invert x for mirrored webcam
+        dy = center[1] - index[2]  # y is inverted to match gamepad up/down
+
+        distance = math.hypot(dx, dy)
+        if distance < dead_zone:
+            x_val = y_val = 32767
+        else:
+            angle = math.atan2(dy, dx)
+            radius = min(distance, max_radius)
+            magnitude = radius / max_radius
+
+            y_norm = math.cos(angle) * magnitude
+            x_norm = math.sin(angle) * magnitude
+
+            x_val = int(32767 - x_norm * 32767)
+            y_val = int(32767 + y_norm * 32767)
+
+            x_val = max(0, min(65535, x_val))
+            y_val = max(0, min(65535, y_val))
+
+        gamepad.left_joystick(x_value=y_val, y_value=x_val)
+        gamepad.update()
+
+        cv2.circle(img, center, max_radius, (0, 255, 255), 2)
+        cv2.circle(img, center, 5, (255, 0, 255), -1)
+        cv2.line(img, center, (index[1], index[2]), (0, 255, 0), 2)
+    else:
+        gamepad.left_joystick(x_value=32767, y_value=32767)
+        gamepad.update()
+
 # === MAIN LOOP ===
-print("[INFO] Controller running. Thumb + finger = D-Pad or action. Press 'Q' to quit.")
+print("[INFO] Analog Stick Controller Running. Press 'Q' to quit.")
 
 while True:
     success, img = cap.read()
@@ -102,40 +108,34 @@ while True:
         elif hand["type"] == "Right":
             right_hand = hand
 
-    # === LEFT HAND: D-PAD by Thumb + Finger Touch ===
+    # === LEFT HAND — ANALOG STICK from 4 → 8 movement ===
     if left_hand:
         lm = left_hand["lmList"]
-        direction = detect_dpad_gesture(lm)
-
-        release_dpad()  # always release before applying new
-        if direction == "up":
-            gamepad.press_button(button=vg.XUSB_BUTTON.XUSB_GAMEPAD_DPAD_UP)
-        elif direction == "down":
-            gamepad.press_button(button=vg.XUSB_BUTTON.XUSB_GAMEPAD_DPAD_DOWN)
-        elif direction == "left":
-            gamepad.press_button(button=vg.XUSB_BUTTON.XUSB_GAMEPAD_DPAD_LEFT)
-        elif direction == "right":
-            gamepad.press_button(button=vg.XUSB_BUTTON.XUSB_GAMEPAD_DPAD_RIGHT)
-        gamepad.update()
+        thumb = lm[4]
+        index = lm[8]
+        analog_center = (Wcam // 3, Hcam // 2)
+        update_analog_if_touching(thumb, index, analog_center)
     else:
-        release_dpad()
+        gamepad.left_joystick(y_value=32767, x_value=32767)
+        gamepad.update()
 
-    # === RIGHT HAND: Button Touch ===
+    # === RIGHT HAND — BUTTONS ===
     if right_hand:
         action = recognize_button_touch(right_hand["lmList"])
-        if action in ["short_pass", "shoot", "long_pass", "change_player"]:
-            press_button(action)
-            time.sleep(0.2)
+        if action != right_hand_action:
             release_all()
-            cv2.putText(img, f'{action.upper()} TRIGGERED', (10, 60),
-                        cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 255, 255), 2)
+            if action != "idle":
+                press_button(action)
+            right_hand_action = action
     else:
         release_all()
+        right_hand_action = None
 
     # === DISPLAY ===
-    cv2.imshow("PES Hand Controller (Touch D-Pad)", img)
+    cv2.imshow("Analog Controller (Touch to Move)", img)
     if cv2.waitKey(1) & 0xFF == ord('q'):
         break
 
 cap.release()
 cv2.destroyAllWindows()
+
