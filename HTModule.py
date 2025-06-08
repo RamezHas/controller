@@ -59,6 +59,28 @@ class handDetector():
                 fingers.append(0)
         return fingers
 
+    def findPositionMultiple(self, img, draw=True):
+        hand_data = []
+        if self.results and self.results.multi_hand_landmarks:
+            for i, handLms in enumerate(self.results.multi_hand_landmarks):
+                lmList = []
+                for id, lm in enumerate(handLms.landmark):
+                    h, w, c = img.shape
+                    cx, cy = int(lm.x * w), int(lm.y * h)
+                    lmList.append((id, cx, cy))
+
+                handType = self.results.multi_handedness[i].classification[0].label
+                hand_data.append({
+                    "lmList": lmList,
+                    "type": handType  # 'Left' or 'Right'
+                })
+
+                if draw:
+                    self.mpDraw.draw_landmarks(img, handLms, self.mpHands.HAND_CONNECTIONS)
+
+        return hand_data
+
+
 def main():
     pTime = 0
     cap = cv2.VideoCapture(0)
