@@ -74,6 +74,7 @@ def update_analog_if_touching(thumb, index, center, dead_zone=10, max_radius=60)
             x_val = int(32767 - x_norm * 32767)
             y_val = int(32767 + y_norm * 32767)
 
+
             x_val = max(0, min(65535, x_val))
             y_val = max(0, min(65535, y_val))
 
