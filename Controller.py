@@ -97,7 +97,7 @@ def update_joystick_pinch(lmList, center, dead_zone=10, max_radius=60):
             x_val = max(0, min(65535, x_val))
             y_val = max(0, min(65535, y_val))
 
-        gamepad.left_joystick(x_value=-1*x_val, y_value=-1*y_val)
+        gamepad.left_joystick(x_value=x_val, y_value=-1*y_val)
         gamepad.update()
 
         # Visual feedback
